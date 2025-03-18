@@ -19,6 +19,9 @@ func init() {
 func privilegesCheck(ctx context.Context, r Resources, logger loggers.Advanced) error {
 	// This is a re-implementation of the gh-ost check
 	// validateGrants() in gh-ost/go/logic/inspect.go
+
+	logger.Infof("Checking privileges for schema: %s", r.Table.SchemaName)
+
 	var foundAll, foundSuper, foundReplicationClient, foundReplicationSlave, foundDBAll, foundReload bool
 	rows, err := r.DB.QueryContext(ctx, `SHOW GRANTS`) //nolint: execinquery
 	if err != nil {
@@ -30,6 +33,9 @@ func privilegesCheck(ctx context.Context, r Resources, logger loggers.Advanced) 
 		if err := rows.Scan(&grant); err != nil {
 			return err
 		}
+		// Debug output of each grant
+		logger.Infof("Checking grant: %s", grant)
+
 		if strings.Contains(grant, `GRANT ALL PRIVILEGES ON *.*`) {
 			foundAll = true
 		}
@@ -61,13 +67,26 @@ func privilegesCheck(ctx context.Context, r Resources, logger loggers.Advanced) 
 	if rows.Err() != nil {
 		return rows.Err()
 	}
+
+	// Debug output of privilege state
+	logger.Infof("Privilege check results:")
+	logger.Infof("- ALL PRIVILEGES: %v", foundAll)
+	logger.Infof("- SUPER: %v", foundSuper)
+	logger.Infof("- REPLICATION CLIENT: %v", foundReplicationClient)
+	logger.Infof("- REPLICATION SLAVE: %v", foundReplicationSlave)
+	logger.Infof("- DB ALL: %v", foundDBAll)
+	logger.Infof("- RELOAD: %v", foundReload)
+
 	if foundAll {
+		logger.Info("Found ALL PRIVILEGES - check passing")
 		return nil
 	}
 	if foundSuper && foundReplicationSlave && foundDBAll {
+		logger.Info("Found SUPER + REPLICATION SLAVE + DB ALL - check passing")
 		return nil
 	}
 	if foundReplicationClient && foundReplicationSlave && foundDBAll && foundReload {
+		logger.Info("Found REPLICATION CLIENT + REPLICATION SLAVE + DB ALL + RELOAD - check passing")
 		return nil
 	}
 	return errors.New("insufficient privileges to run a migration. Needed: SUPER|REPLICATION CLIENT, RELOAD, REPLICATION SLAVE and ALL on %s.*")
