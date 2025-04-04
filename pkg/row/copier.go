@@ -176,6 +176,7 @@ func (c *Copier) StartTime() time.Time {
 }
 
 func (c *Copier) Run(ctx context.Context) error {
+	c.logger.Info("Running the copier!")
 	c.Lock()
 	c.startTime = time.Now()
 	defer func() {
@@ -194,6 +195,9 @@ func (c *Copier) Run(ctx context.Context) error {
 	g.SetLimit(c.concurrency)
 	for !c.chunker.IsRead() && c.isHealthy(errGrpCtx) {
 		g.Go(func() error {
+			c.logger.Info("Waiting for 5 seconds")
+
+			time.Sleep(5 * time.Second)
 			chunk, err := c.chunker.Next()
 			if err != nil {
 				if err == table.ErrTableIsRead {
