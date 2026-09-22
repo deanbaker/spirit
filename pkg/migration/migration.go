@@ -91,6 +91,7 @@ type Migration struct {
 	TargetChunkSize      uint64        `name:"target-chunk-size" help:"In-memory byte budget per copy chunk (in bytes)" optional:"" default:"16777216"`
 	ReplicaDSN           string        `name:"replica-dsn" help:"DSN(s) for replica(s) used for lag checking. Multiple replicas can be comma-separated; Spirit throttles on the slowest." optional:""`
 	ReplicaMaxLag        time.Duration `name:"replica-max-lag" help:"The maximum lag allowed on the replica before the migration throttles. If lag becomes unobservable (lag polling keeps failing) the migration pauses (fails closed) until polling recovers; remove --replica-dsn to proceed without lag protection." optional:"" default:"120s"`
+	ForceKillAfter       time.Duration `name:"force-kill-after" help:"Delay before killing transactions blocking DDL or table locks; 0 uses 90% of lock-wait-timeout" optional:"" default:"0s"`
 	LockWaitTimeout      time.Duration `name:"lock-wait-timeout" help:"The DDL lock_wait_timeout required for checksum and cutover" optional:"" default:"30s"`
 	SkipDropAfterCutover bool          `name:"skip-drop-after-cutover" help:"Keep old table after completing cutover" optional:"" default:"false"`
 	DeferCutOver         bool          `name:"defer-cutover" help:"Defer cutover (and checksum) until sentinel table is dropped" optional:"" default:"false"`
@@ -134,16 +135,28 @@ type Migration struct {
 // asking for a slow migration, which is theirs to ask for.
 const minPoolSize = dbconn.MinMigrationPoolSize
 
+func (m *Migration) validateForceKillAfter() error {
+	config := dbconn.NewDBConfig()
+	if m.LockWaitTimeout > 0 {
+		config.LockWaitTimeout = int(m.LockWaitTimeout.Seconds())
+	}
+	config.ForceKillAfter = m.ForceKillAfter
+	return config.ValidateForceKillAfter()
+}
+
 // Validate is called by Kong after parsing to reject invalid flag values.
 // Zero values mean "use the default" (normalizeOptions fills them in), so they
 // are not rejected here; only explicitly-negative or otherwise invalid values
 // are caught.
 //
-// The cross-flag check on MaxConnections is the exception, and it is here
+// Cross-flag checks include ForceKillAfter and MaxConnections. The latter is here
 // because it has nowhere else to be: the pool is set to that number verbatim
 // and never recomputed, so a number too small to work is a migration that
 // stalls somewhere in the middle rather than one that fails at startup.
 func (m *Migration) Validate() error {
+	if err := m.validateForceKillAfter(); err != nil {
+		return err
+	}
 	if m.Threads < 0 {
 		return fmt.Errorf("--threads must be non-negative, got %d", m.Threads)
 	}
@@ -182,6 +195,9 @@ func (m *Migration) Run() error {
 // --statement is the only way to describe the change, and it is the canonical
 // source of truth for the rest of the code.
 func (m *Migration) normalizeOptions() (stmts []*statement.AbstractStatement, err error) {
+	if err := m.validateForceKillAfter(); err != nil {
+		return nil, err
+	}
 	if m.TargetChunkSize == 0 {
 		m.TargetChunkSize = table.DefaultTargetChunkBytes
 	}

@@ -294,6 +294,7 @@ func (r *Runner) Run(ctx context.Context) (retErr error) {
 	if r.migration.LockWaitTimeout > 0 {
 		r.dbConfig.LockWaitTimeout = int(r.migration.LockWaitTimeout.Seconds())
 	}
+	r.dbConfig.ForceKillAfter = r.migration.ForceKillAfter
 	r.dbConfig.InterpolateParams = r.migration.InterpolateParams
 	// ForceKill is always enabled for migrations (true by default in NewDBConfig).
 	// Map TLS configuration from migration to dbConfig

@@ -53,6 +53,7 @@ const (
 )
 
 type DBConfig struct {
+	ForceKillAfter           time.Duration // Zero preserves the default: 90% of LockWaitTimeout.
 	LockWaitTimeout          int
 	InnodbLockWaitTimeout    int
 	MaxRetries               int
@@ -386,6 +387,9 @@ func ForceExec(ctx context.Context, db *sql.DB, tables []*table.TableInfo, dbCon
 // forceExec receives the kill and cleanup operations so tests can control their
 // failures while exercising the statement and retry against real MySQL.
 func forceExec(ctx context.Context, db *sql.DB, dbConfig *DBConfig, logger *slog.Logger, stmt string, kill func(context.Context, int) ([]int, error), waitForCleanup func(context.Context, *sql.DB, []int) error) error {
+	if err := dbConfig.ValidateForceKillAfter(); err != nil {
+		return err
+	}
 	trx, connId, err := BeginStandardTrx(ctx, db, nil)
 	if err != nil {
 		return err
@@ -402,9 +406,7 @@ func forceExec(ctx context.Context, db *sql.DB, dbConfig *DBConfig, logger *slog
 		}
 	}()
 
-	// The grace period is hardcoded to be at least 0.9 seconds. This should be the minimum anyway,
-	// since the minimum LockWaitTimeout=1 second
-	duration := forceKillGracePeriod(dbConfig.LockWaitTimeout)
+	duration := dbConfig.forceKillDelay()
 	var wg sync.WaitGroup
 	var killTimerFired atomic.Bool
 	var killed []int
