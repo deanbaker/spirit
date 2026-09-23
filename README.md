@@ -165,9 +165,3 @@ make test
 ```
 
 The project uses Git pre-push hooks to ensure code quality. After running `make setup-hooks`, code will be automatically linted before being pushed to the remote repository.
-
-### Blocker kill timing
-
-`spirit migrate --lock-wait-timeout=10s --force-kill-after=5s ...` starts killing transactions that block metadata locks after five seconds, while MySQL can wait up to ten seconds to acquire each lock. This applies to native DDL and table locks used during checksum and cutover. Killing a connection is asynchronous; the remaining time does not guarantee rollback has finished.
-
-`--force-kill-after=0s` (the default) preserves the existing delay of 90% of the lock wait timeout. An explicit delay must be positive and less than the timeout MySQL receives, which is truncated to whole seconds. Choosing an earlier delay can interrupt application transactions sooner.

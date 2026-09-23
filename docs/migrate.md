@@ -20,6 +20,7 @@ spirit migrate --host mydb:3306 --username root --password secret \
 - [defer-cutover](#defer-cutover)
 - [enable-experimental-autoscaling](#enable-experimental-autoscaling)
 - [enable-experimental-lockless-checksum](#enable-experimental-lockless-checksum)
+- [force-kill-after](#force-kill-after)
 - [host](#host)
 - [lock-wait-timeout](#lock-wait-timeout)
 - [max-commit-latency](#max-commit-latency)
@@ -215,6 +216,25 @@ ranges can keep it running until cancelled. The status line's `deferred` count
 covers only the current pass, not the lifetime of the run; use the timestamped
 hot-range and pass-completion logs to investigate repeated deferrals.
 
+### force-kill-after
+
+- Type: Duration
+- Default value: `0s` (i.e. 90% of [lock-wait-timeout](#lock-wait-timeout))
+
+How long Spirit waits before it starts killing the connections that are blocking a metadata lock. The default of `0s` keeps the historical behavior of waiting for 90% of the `lock-wait-timeout`, which leaves very little time for the killed connections to release their locks when the timeout is short. For example, a `10s` timeout only starts killing at 9 seconds, leaving about one second before the statement itself times out. Setting this flag decouples the two:
+
+```bash
+spirit migrate --lock-wait-timeout=10s --force-kill-after=5s \
+       --host mydb:3306 --database mydb \
+       --statement "ALTER TABLE users ADD COLUMN email VARCHAR(255)"
+```
+
+Here MySQL still waits up to 10 seconds for each metadata lock, but Spirit starts killing blockers after 5 seconds. The delay applies to both the native DDL path and the table locks used for checksum and cutover. Which connections are eligible to be killed does not change; see [lock-wait-timeout](#lock-wait-timeout) for the selection rules.
+
+An explicit value must be positive and less than the `lock_wait_timeout` that MySQL receives, which is truncated to whole seconds. Spirit rejects the value at startup otherwise.
+
+Killing a connection is asynchronous, so the extra time is not a guarantee that rollback has finished before the lock wait expires. Killing earlier also interrupts application transactions sooner, so prefer investigating long-running transactions before lowering this value.
+
 ### host
 
 - Type: String
@@ -230,7 +250,7 @@ The host (and optional port) to use when connecting to MySQL. If no port is prov
 
 Spirit requires an exclusive metadata lock for cutover and checksum operations. The MySQL default for waiting for a metadata lock is 1 year(!), which means that if there are any long running transactions holding a shared lock on the table that prevent the exclusive lock from being acquired, new lock requests will effectively queue forever behind Spirit's exclusive lock request. To prevent Spirit causing such outages, Spirit sets the `lock_wait_timeout` to 30s by default.
 
-At 90% of the `lock-wait-timeout` (i.e. after 27 seconds with the default of 30 seconds), Spirit will also start killing connections that are blocking the lock acquisition. It does this in a semi-intelligent way:
+At 90% of the `lock-wait-timeout` (i.e. after 27 seconds with the default of 30 seconds), Spirit will also start killing connections that are blocking the lock acquisition. Use [force-kill-after](#force-kill-after) to set this delay independently of the timeout. It does this in a semi-intelligent way:
 
 - It reads `performance_schema` to find only connections that are blocking a metadata lock being acquired on the migrating table.
 - It refuses to kill connections if they have a transaction open that has modified a large number of rows (>1 million).
